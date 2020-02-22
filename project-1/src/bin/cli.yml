@@ -1,0 +1,25 @@
+name: kvs
+version: "0.1.0"
+author: Yuki Saito
+about: A key-value store
+subcommands:
+  - set:
+      args:
+        - KEY:
+            help: A string key
+            required: true
+        - VALUE:
+            help: The string value of the key
+            required: true
+
+  - get:
+      args:
+        - KEY:
+            help: A string key
+            required: true
+
+  - rm:
+      args:
+        - KEY:
+            help: A string key
+            required: true
