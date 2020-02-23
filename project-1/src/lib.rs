@@ -28,10 +28,7 @@ impl KvStore {
     }
 
     pub fn get(&mut self, key: String) -> Option<String> {
-        match self.map.get(&key) {
-            Some(value) => Some(value.to_owned()),
-            None => None,
-        }
+        self.map.get(&key).and_then(|v| Some(v.clone()))
     }
 
     pub fn remove(&mut self, key: String) {
