@@ -1,8 +1,9 @@
-use kvs::{KvStore, Result};
+use kvs::{KvStore, KvsError, Result};
 
 use clap::{load_yaml, App};
 
 use std::env::current_dir;
+use std::process::exit;
 
 fn main() -> Result<()> {
     let yaml = load_yaml!("cli.yml");
@@ -31,6 +32,10 @@ fn main() -> Result<()> {
             let mut kvs = KvStore::open(current_dir()?)?;
             match kvs.remove(key.to_string()) {
                 Ok(()) => {}
+                Err(KvsError::KeyNotFound) => {
+                    println!("Key not found");
+                    exit(1);
+                }
                 Err(e) => return Err(e),
             }
         }
