@@ -63,7 +63,7 @@ impl KvStore {
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         match self.index_map.get(&key) {
             Some(value) => Ok(Some(value.clone())),
-            None => Err(KvsError::KeyNotFound),
+            None => Ok(None),
         }
     }
 

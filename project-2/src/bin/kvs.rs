@@ -21,13 +21,11 @@ fn main() -> Result<()> {
             let key = matches.value_of("KEY").expect("KEY argument missing");
 
             let mut kvs = KvStore::open(current_dir()?)?;
-            match kvs.get(key.to_string()) {
-                Ok(value) => println!("{}", value.unwrap()),
-                Err(_) => {
-                    println!("Key not found");
-                    exit(0);
-                }
+            match kvs.get(key.to_string())? {
+                Some(value) => println!("{}", value),
+                None => println!("Key not found"),
             }
+            exit(0);
         }
         ("rm", Some(matches)) => {
             let key = matches.value_of("KEY").expect("KEY argument missing");
