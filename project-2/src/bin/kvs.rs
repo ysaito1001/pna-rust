@@ -10,23 +10,26 @@ fn main() -> Result<()> {
     let matches = App::from_yaml(yaml).get_matches();
 
     match matches.subcommand() {
-        ("set", Some(_)) => {
+        ("set", Some(matches)) => {
             let key = matches.value_of("KEY").expect("KEY argument missing");
             let value = matches.value_of("VALUE").expect("VALUE argument missing");
 
             let mut kvs = KvStore::open(current_dir()?)?;
             kvs.set(key.to_string(), value.to_string())?
         }
-        ("get", Some(_)) => {
+        ("get", Some(matches)) => {
             let key = matches.value_of("KEY").expect("KEY argument missing");
 
             let mut kvs = KvStore::open(current_dir()?)?;
-            match kvs.get(key.to_string())? {
-                Some(value) => println!("{}", value),
-                None => println!("Key not found"),
+            match kvs.get(key.to_string()) {
+                Ok(value) => println!("{}", value.unwrap()),
+                Err(_) => {
+                    println!("Key not found");
+                    exit(0);
+                }
             }
         }
-        ("rm", Some(_)) => {
+        ("rm", Some(matches)) => {
             let key = matches.value_of("KEY").expect("KEY argument missing");
 
             let mut kvs = KvStore::open(current_dir()?)?;

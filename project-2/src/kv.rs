@@ -1,9 +1,13 @@
+use serde_json::Deserializer;
+
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader, BufWriter, Write};
-use std::path::PathBuf;
+use std::fs::{File, OpenOptions};
+use std::io::{BufReader, BufWriter, Write};
+use std::path::{Path, PathBuf};
 
 use crate::{Command, KvsError, Result};
+
+const LOG_FILE_BASENAME: &'static str = "0.log";
 
 /// The `KvStore` stores string key/value pairs.
 ///
@@ -26,13 +30,17 @@ pub struct KvStore {
 impl KvStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
         let path = path.into();
-        let current_log_file = path.join(format!("0.log"));
-        let next_log_file = path.join(format!("1.log"));
-        let mut reader = BufReader::new(File::open(&current_log_file)?);
-        let writer = BufWriter::new(File::create(&next_log_file)?);
+        let log_file = path.join(LOG_FILE_BASENAME);
 
-        let mut index_map = HashMap::new();
-        populate_map(&mut index_map, &mut reader);
+        let index_map = create_index_map(&log_file)?;
+
+        let writer = BufWriter::new(
+            OpenOptions::new()
+                .create(true)
+                .write(true)
+                .append(true)
+                .open(&log_file)?,
+        );
 
         Ok(KvStore {
             writer: writer,
@@ -47,6 +55,7 @@ impl KvStore {
         };
         let serialized = serde_json::to_string(&cmd)?;
         self.writer.write(serialized.as_bytes())?;
+        self.writer.flush()?;
         self.index_map.insert(key, value);
         Ok(())
     }
@@ -63,6 +72,7 @@ impl KvStore {
             let cmd = Command::Remove { key: key.clone() };
             let serialized = serde_json::to_string(&cmd)?;
             self.writer.write(serialized.as_bytes())?;
+            self.writer.flush()?;
             self.index_map.remove(&key);
             Ok(())
         } else {
@@ -71,11 +81,16 @@ impl KvStore {
     }
 }
 
-fn populate_map<R: BufRead>(index_map: &mut HashMap<String, String>, reader: &mut R) -> Result<()> {
-    for line in reader.lines() {
-        let line = line?;
-        let deserialized = serde_json::from_str(&line)?;
-        match deserialized {
+fn create_index_map(log_filename: &PathBuf) -> Result<HashMap<String, String>> {
+    if !Path::new(&log_filename).exists() {
+        return Ok(HashMap::new());
+    }
+
+    let mut index_map = HashMap::new();
+    let mut command_stream = Deserializer::from_reader(BufReader::new(File::open(&log_filename)?))
+        .into_iter::<Command>();
+    while let Some(command) = command_stream.next() {
+        match command? {
             Command::Set { key, value } => {
                 index_map.insert(key, value);
             }
@@ -84,5 +99,5 @@ fn populate_map<R: BufRead>(index_map: &mut HashMap<String, String>, reader: &mu
             }
         }
     }
-    Ok(())
+    Ok(index_map)
 }
