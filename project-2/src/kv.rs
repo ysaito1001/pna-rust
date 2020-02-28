@@ -2,10 +2,10 @@ use serde_json::Deserializer;
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{BufReader, BufWriter, Write};
-use std::path::{Path, PathBuf};
+use std::io::{BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::path::PathBuf;
 
-use crate::{Command, KvsError, Result};
+use crate::{Command, KvsError, LogPointer, Result};
 
 const LOG_FILE_BASENAME: &'static str = "0.log";
 
@@ -23,8 +23,8 @@ const LOG_FILE_BASENAME: &'static str = "0.log";
 /// assert_eq!(val, Some("value".to_owned()));
 /// ```
 pub struct KvStore {
-    writer: BufWriter<File>,
-    index_map: HashMap<String, String>,
+    file_ref: File,
+    index_map: HashMap<String, LogPointer>,
 }
 
 impl KvStore {
@@ -32,48 +32,67 @@ impl KvStore {
         let path = path.into();
         let log_file = path.join(LOG_FILE_BASENAME);
 
-        let index_map = create_index_map(&log_file)?;
+        let mut file_ref = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .append(true)
+            .open(&log_file)?;
 
-        let writer = BufWriter::new(
-            OpenOptions::new()
-                .create(true)
-                .write(true)
-                .append(true)
-                .open(&log_file)?,
-        );
+        let index_map = create_index_map(&mut file_ref)?;
 
         Ok(KvStore {
-            writer: writer,
+            file_ref: file_ref,
             index_map: index_map,
         })
     }
 
     pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        let cmd = Command::Set {
+        let command = Command::Set {
             key: key.clone(),
             value: value.clone(),
         };
-        let serialized = serde_json::to_string(&cmd)?;
-        self.writer.write(serialized.as_bytes())?;
-        self.writer.flush()?;
-        self.index_map.insert(key, value);
+        let serialized = serde_json::to_string(&command)?;
+
+        let mut writer = BufWriter::new(&mut self.file_ref);
+        let current_position = writer.seek(SeekFrom::End(0))?;
+        let bytes_written = writer.write(serialized.as_bytes())? as u64;
+        writer.flush()?;
+
+        self.index_map
+            .insert(key, (current_position, bytes_written).into());
+
         Ok(())
     }
 
     pub fn get(&mut self, key: String) -> Result<Option<String>> {
         match self.index_map.get(&key) {
-            Some(value) => Ok(Some(value.clone())),
+            Some(log_pointer) => {
+                let mut reader = BufReader::new(&mut self.file_ref);
+                reader.seek(SeekFrom::Start(log_pointer.offset))?;
+                let serialized = reader.take(log_pointer.length);
+                match serde_json::from_reader(serialized)? {
+                    Command::Set { value, .. } => Ok(Some(value)),
+                    Command::Remove { .. } => Ok(None),
+                }
+            }
             None => Ok(None),
         }
     }
 
     pub fn remove(&mut self, key: String) -> Result<()> {
         if self.index_map.contains_key(&key) {
-            let cmd = Command::Remove { key: key.clone() };
-            let serialized = serde_json::to_string(&cmd)?;
-            self.writer.write(serialized.as_bytes())?;
-            self.writer.flush()?;
-            self.index_map.remove(&key);
+            let command = Command::Remove { key: key.clone() };
+            let serialized = serde_json::to_string(&command)?;
+
+            let mut writer = BufWriter::new(&mut self.file_ref);
+            let current_position = writer.seek(SeekFrom::End(0))?;
+            let bytes_written = writer.write(serialized.as_bytes())? as u64;
+            writer.flush()?;
+
+            self.index_map
+                .insert(key, (current_position, bytes_written).into());
+
             Ok(())
         } else {
             Err(KvsError::KeyNotFound)
@@ -81,23 +100,24 @@ impl KvStore {
     }
 }
 
-fn create_index_map(log_filename: &PathBuf) -> Result<HashMap<String, String>> {
-    if !Path::new(&log_filename).exists() {
-        return Ok(HashMap::new());
+fn create_index_map(file_ref: &mut File) -> Result<HashMap<String, LogPointer>> {
+    let mut result = HashMap::new();
+
+    let mut reader = BufReader::new(file_ref);
+    let mut current_position = reader.seek(SeekFrom::Start(0))?;
+
+    let mut command_stream = Deserializer::from_reader(reader).into_iter::<Command>();
+
+    while let Some(command) = command_stream.next() {
+        let next_position = command_stream.byte_offset() as u64;
+        match command? {
+            Command::Set { key, .. } => {
+                result.insert(key, (current_position..next_position).into())
+            }
+            Command::Remove { key } => result.insert(key, (current_position..next_position).into()),
+        };
+        current_position = next_position;
     }
 
-    let mut index_map = HashMap::new();
-    let mut command_stream = Deserializer::from_reader(BufReader::new(File::open(&log_filename)?))
-        .into_iter::<Command>();
-    while let Some(command) = command_stream.next() {
-        match command? {
-            Command::Set { key, value } => {
-                index_map.insert(key, value);
-            }
-            Command::Remove { key } => {
-                index_map.remove(&key);
-            }
-        }
-    }
-    Ok(index_map)
+    Ok(result)
 }

@@ -1,7 +1,9 @@
+pub use command::Command;
 pub use error::{KvsError, Result};
 pub use kv::KvStore;
-pub use types::Command;
+pub use log_pointer::LogPointer;
 
+mod command;
 mod error;
 mod kv;
-mod types;
+mod log_pointer;
