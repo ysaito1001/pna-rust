@@ -1,0 +1,42 @@
+name: kvs-client
+version: "0.1.0"
+author: Yuki Saito
+subcommands:
+  - set:
+      args:
+        - KEY:
+            help: A string key
+            required: true
+        - VALUE:
+            help: The string value of the key
+            required: true
+        - addr:
+            long: addr
+            help: Sets the server address
+            takes_value: true
+            value_name: IP:PORT
+            default_value: 127.0.0.1:4000
+
+  - get:
+      args:
+        - KEY:
+            help: A string key
+            required: true
+        - addr:
+            long: addr
+            help: Sets the server address
+            takes_value: true
+            value_name: IP:PORT
+            default_value: 127.0.0.1:4000
+
+  - rm:
+      args:
+        - KEY:
+            help: A string key
+            required: true
+        - addr:
+            long: addr
+            help: Sets the server address
+            takes_value: true
+            value_name: IP:PORT
+            default_value: 127.0.0.1:4000
