@@ -3,7 +3,7 @@ use kvs::Result;
 use clap::{load_yaml, App};
 use log::{info, LevelFilter};
 
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 
 fn main() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
@@ -17,6 +17,14 @@ fn main() -> Result<()> {
     info!("kvs-server {}", env!("CARGO_PKG_VERSION"));
     info!("Storage engine: {}", engine);
     info!("Listening on {}", addr);
+
+    let listener = TcpListener::bind(addr)?;
+
+    for stream in listener.incoming() {
+        let stream = stream.unwrap();
+
+        info!("Accepted connection: {:?}", stream);
+    }
 
     Ok(())
 }
