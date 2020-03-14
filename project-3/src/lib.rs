@@ -1,7 +1,11 @@
-pub use command::Command;
+pub use client::KvsClient;
 pub use engines::{KvStore, KvsEngine};
 pub use error::{KvsError, Result};
+pub use server::KvsServer;
 
-mod command;
+mod client;
 mod engines;
 mod error;
+mod request;
+mod response;
+mod server;

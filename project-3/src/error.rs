@@ -4,10 +4,10 @@ use std::{io, net};
 
 #[derive(Fail, Debug)]
 pub enum KvsError {
-    #[fail(display = "{}", _0)]
+    #[fail(display = "IO error: {}", _0)]
     Io(io::Error),
 
-    #[fail(display = "{}", _0)]
+    #[fail(display = "serde_json error: {}", _0)]
     Serde(serde_json::Error),
 
     #[fail(display = "Key not found")]
@@ -18,6 +18,9 @@ pub enum KvsError {
 
     #[fail(display = "{}", _0)]
     Net(net::AddrParseError),
+
+    #[fail(display = "{}", _0)]
+    StringError(String),
 }
 
 impl From<io::Error> for KvsError {

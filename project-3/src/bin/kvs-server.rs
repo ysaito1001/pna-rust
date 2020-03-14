@@ -1,11 +1,13 @@
-use kvs::Result;
+use kvs::{KvStore, KvsServer, Result};
 
 use clap::{load_yaml, App};
-use log::{info, LevelFilter};
+use log::{error, info, LevelFilter};
 
-use std::net::{SocketAddr, TcpListener};
+use std::env::current_dir;
+use std::net::SocketAddr;
+use std::process::exit;
 
-fn main() -> Result<()> {
+fn run() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let yaml = load_yaml!("cli-server.yml");
@@ -18,13 +20,15 @@ fn main() -> Result<()> {
     info!("Storage engine: {}", engine);
     info!("Listening on {}", addr);
 
-    let listener = TcpListener::bind(addr)?;
+    let engine = KvStore::open(current_dir()?)?;
+    let server = KvsServer::new(engine);
 
-    for stream in listener.incoming() {
-        let stream = stream.unwrap();
+    server.run(addr)
+}
 
-        info!("Accepted connection: {:?}", stream);
+fn main() {
+    if let Err(e) = run() {
+        error!("{}", e);
+        exit(1);
     }
-
-    Ok(())
 }
