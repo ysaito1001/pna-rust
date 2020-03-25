@@ -32,6 +32,7 @@ const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
 /// # use kvs::{KvStore, Result};
 /// # fn try_main() -> Result<()> {
 /// use std::env::current_dir;
+/// use kvs::KvsEngine;
 /// let mut store = KvStore::open(current_dir()?)?;
 /// store.set("key".to_owned(), "value".to_owned())?;
 /// let val = store.get("key".to_owned())?;
