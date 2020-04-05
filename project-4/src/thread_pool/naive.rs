@@ -1,3 +1,5 @@
+use std::thread;
+
 use super::ThreadPool;
 
 use crate::Result;
@@ -6,13 +8,13 @@ pub struct NaiveThreadPool;
 
 impl ThreadPool for NaiveThreadPool {
     fn new(_number_of_threads: u32) -> Result<Self> {
-        unimplemented!();
+        Ok(NaiveThreadPool)
     }
 
-    fn spawn<F>(&self, _job: F)
+    fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static,
     {
-        unimplemented!();
+        thread::spawn(job);
     }
 }
