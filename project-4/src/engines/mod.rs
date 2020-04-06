@@ -1,6 +1,6 @@
 use super::error::Result;
 
-pub trait KvsEngine: Clone {
+pub trait KvsEngine: Clone + Send + 'static {
     fn set(&self, key: String, value: String) -> Result<()>;
 
     fn get(&self, key: String) -> Result<Option<String>>;

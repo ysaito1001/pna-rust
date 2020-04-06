@@ -1,3 +1,4 @@
+use kvs::thread_pool::{NaiveThreadPool, ThreadPool};
 use kvs::{KvStore, KvsError, KvsServer, Result, SledKvsEngine};
 
 use clap::{load_yaml, App};
@@ -27,13 +28,15 @@ fn run() -> Result<()> {
     same_engine_as_last_time(&engine_file, &engine)?;
     fs::write(engine_file, format!("{}", engine))?;
 
+    let pool = NaiveThreadPool::new(num_cpus::get() as u32)?;
+
     match engine {
         "kvs" => {
-            let server = KvsServer::new(KvStore::open(current_dir()?)?);
+            let server = KvsServer::new(KvStore::open(current_dir()?)?, pool);
             server.run(addr)
         }
         "sled" => {
-            let server = KvsServer::new(SledKvsEngine::new(sled::open(current_dir()?)?));
+            let server = KvsServer::new(SledKvsEngine::new(sled::open(current_dir()?)?), pool);
             server.run(addr)
         }
         _ => unreachable!(),
