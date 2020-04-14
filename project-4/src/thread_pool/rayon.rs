@@ -5,9 +5,9 @@ use crate::{KvsError, Result};
 pub struct RayonThreadPool(rayon::ThreadPool);
 
 impl ThreadPool for RayonThreadPool {
-    fn new(number_of_threads: u32) -> Result<Self> {
+    fn new(number_of_threads: usize) -> Result<Self> {
         let pool = rayon::ThreadPoolBuilder::new()
-            .num_threads(number_of_threads as usize)
+            .num_threads(number_of_threads)
             .build()
             .map_err(|e| KvsError::StringError(format!("{}", e)))?;
         Ok(RayonThreadPool(pool))

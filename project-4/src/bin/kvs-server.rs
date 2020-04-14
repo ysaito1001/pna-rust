@@ -1,4 +1,4 @@
-use kvs::thread_pool::{NaiveThreadPool, ThreadPool};
+use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
 use kvs::{KvStore, KvsError, KvsServer, Result, SledKvsEngine};
 
 use clap::{load_yaml, App};
@@ -11,6 +11,47 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::exit;
 
+macro_rules! with_engine {
+    ($engine: expr, $path: expr, |$name: ident| $block: block) => {{
+        match $engine {
+            "kvs" => {
+                let $name = KvStore::open($path)?;
+                let result: Result<()> = $block;
+                result
+            }
+            "sled" => {
+                let $name = SledKvsEngine::new(sled::open($path)?);
+                let result: Result<()> = $block;
+                result
+            }
+            _ => unreachable!(),
+        }
+    }};
+}
+
+macro_rules! with_pool {
+    ($pool: expr, $num_cpus: expr, |$name: ident| $block: block) => {{
+        match $pool {
+            "naive" => {
+                let $name = NaiveThreadPool::new($num_cpus)?;
+                let result: Result<()> = $block;
+                result
+            }
+            "shared_queue" => {
+                let $name = SharedQueueThreadPool::new($num_cpus)?;
+                let result: Result<()> = $block;
+                result
+            }
+            "rayon" => {
+                let $name = RayonThreadPool::new($num_cpus)?;
+                let result: Result<()> = $block;
+                result
+            }
+            _ => unreachable!(),
+        }
+    }};
+}
+
 fn run() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
@@ -18,7 +59,8 @@ fn run() -> Result<()> {
     let matches = App::from_yaml(yaml).get_matches();
 
     let addr: SocketAddr = matches.value_of("addr").unwrap().parse()?;
-    let engine = matches.value_of("engine").unwrap();
+    let engine: &str = matches.value_of("engine").unwrap();
+    let pool: &str = matches.value_of("pool").unwrap();
 
     info!("kvs-server {}", env!("CARGO_PKG_VERSION"));
     info!("Storage engine: {}", engine);
@@ -28,19 +70,15 @@ fn run() -> Result<()> {
     same_engine_as_last_time(&engine_file, &engine)?;
     fs::write(engine_file, format!("{}", engine))?;
 
-    let pool = NaiveThreadPool::new(num_cpus::get() as u32)?;
+    with_engine!(engine, current_dir()?, |engine| {
+        with_pool!(pool, num_cpus::get(), |pool| {
+            let server = KvsServer::new(engine, pool);
+            server.run(addr)?;
+            Ok(())
+        })
+    })?;
 
-    match engine {
-        "kvs" => {
-            let server = KvsServer::new(KvStore::open(current_dir()?)?, pool);
-            server.run(addr)
-        }
-        "sled" => {
-            let server = KvsServer::new(SledKvsEngine::new(sled::open(current_dir()?)?), pool);
-            server.run(addr)
-        }
-        _ => unreachable!(),
-    }
+    Ok(())
 }
 
 fn same_engine_as_last_time(engine_file: &PathBuf, engine: &str) -> Result<()> {

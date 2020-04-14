@@ -11,7 +11,7 @@ pub struct SharedQueueThreadPool {
 }
 
 impl ThreadPool for SharedQueueThreadPool {
-    fn new(number_of_threads: u32) -> Result<Self> {
+    fn new(number_of_threads: usize) -> Result<Self> {
         let (tx, rx) = channel::unbounded();
         for _ in 0..number_of_threads {
             let rx = TaskReceiver(rx.clone());

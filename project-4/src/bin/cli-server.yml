@@ -15,3 +15,10 @@ args:
         value_name: ENGINE-NAME
         default_value: kvs
         possible_values: [ kvs, sled ]
+
+  - pool:
+        long: pool
+        help: Sets the thread pool
+        value_name: THREAD-POOL-NAME
+        default_value: naive
+        possible_values: [ naive, shared_queue, rayon ]

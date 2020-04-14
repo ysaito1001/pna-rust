@@ -1,7 +1,7 @@
 use super::error::Result;
 
 pub trait ThreadPool {
-    fn new(number_of_threads: u32) -> Result<Self>
+    fn new(number_of_threads: usize) -> Result<Self>
     where
         Self: Sized;
 
