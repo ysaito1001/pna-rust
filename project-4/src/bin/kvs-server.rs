@@ -1,15 +1,15 @@
-use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
-use kvs::{KvStore, KvsError, KvsServer, Result, SledKvsEngine};
-
-use clap::{load_yaml, App};
-use log::{error, info, LevelFilter};
-use sled;
-
 use std::env::current_dir;
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::exit;
+
+use clap::{load_yaml, App};
+use log::{error, info, LevelFilter};
+use sled;
+
+use kvs::thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool};
+use kvs::{KvStore, KvsError, KvsServer, Result, SledKvsEngine};
 
 macro_rules! with_engine {
     ($engine: expr, $path: expr, |$name: ident| $block: block) => {{

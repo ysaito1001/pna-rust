@@ -1,7 +1,8 @@
-use failure::Fail;
-
 use std::string::FromUtf8Error;
+use std::sync::PoisonError;
 use std::{io, net};
+
+use failure::Fail;
 
 #[derive(Fail, Debug)]
 pub enum KvsError {
@@ -28,6 +29,9 @@ pub enum KvsError {
 
     #[fail(display = "{}", _0)]
     StringError(String),
+
+    #[fail(display = "Concurrent error when a lock is acquired")]
+    ConcurrentError,
 }
 
 impl From<io::Error> for KvsError {
@@ -57,6 +61,12 @@ impl From<FromUtf8Error> for KvsError {
 impl From<sled::Error> for KvsError {
     fn from(err: sled::Error) -> KvsError {
         KvsError::Sled(err)
+    }
+}
+
+impl<T> From<PoisonError<T>> for KvsError {
+    fn from(_: PoisonError<T>) -> Self {
+        KvsError::ConcurrentError
     }
 }
 

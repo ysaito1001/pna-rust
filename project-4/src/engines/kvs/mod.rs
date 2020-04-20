@@ -1,25 +1,29 @@
-use command::Command;
-use log_pointer::LogPointer;
-use log_reader::LogReader;
-use log_rotator::LogRotator;
-use log_writer::LogWriter;
-use serde_json::Deserializer;
-
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom, Write};
-use std::path::PathBuf;
+use std::borrow::Borrow;
+use std::collections::BTreeMap;
+use std::ffi::OsStr;
+use std::fs::{self, File};
+use std::io::BufReader;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-mod command;
-mod log_pointer;
-mod log_reader;
-mod log_rotator;
-mod log_writer;
+use crossbeam_skiplist::SkipMap;
+use log::error;
+use serde_json::Deserializer;
 
-use crate::{KvsError, Result};
+mod command;
+mod kv_reader;
+mod kv_writer;
+mod log_common;
+mod log_pointer;
 
 use super::KvsEngine;
+use crate::{KvsError, Result};
+use command::Command;
+use kv_reader::KvReader;
+use kv_writer::KvWriter;
+use log_common::*;
+use log_pointer::LogPointer;
 
 const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
 
@@ -42,50 +46,109 @@ const COMPACTION_THRESHOLD: u64 = 1024 * 1024;
 /// # }
 /// ```
 #[derive(Clone)]
-pub struct KvStore(Arc<Mutex<SharedKvStore>>);
-
-pub struct SharedKvStore {
-    log_rotator: LogRotator,
-    index_map: HashMap<String, LogPointer>,
-    total_bytes_written: u64,
+pub struct KvStore {
+    path: Arc<PathBuf>,
+    index_map: Arc<SkipMap<String, LogPointer>>,
+    kv_reader: KvReader,
+    kv_writer: Arc<Mutex<KvWriter>>,
+    current_generation: u64,
+    uncompacted: Arc<AtomicU64>,
 }
 
 impl KvStore {
     pub fn open(path: impl Into<PathBuf>) -> Result<KvStore> {
-        let path = path.into();
-        let mut log_rotator = LogRotator::new(path)?;
-        let (index_map, total_bytes_written) = create_index_map(log_rotator.get_log_reader())?;
+        let path = Arc::new(path.into());
+        fs::create_dir_all(&*path)?;
 
-        Ok(KvStore(Arc::new(Mutex::new(SharedKvStore {
-            log_rotator: log_rotator,
-            index_map: index_map,
-            total_bytes_written: total_bytes_written,
-        }))))
+        let mut readers = BTreeMap::new();
+        let index_map = Arc::new(SkipMap::new());
+
+        let generations = get_log_generations(&path)?;
+        let mut uncompacted = 0;
+
+        for &generation in &generations {
+            let mut reader = BufReader::new(File::open(log_path(&path, generation))?);
+            uncompacted += load(generation, &mut reader, &*index_map)?;
+            readers.insert(generation, reader);
+        }
+
+        let current_generation = generations.last().unwrap_or(&0) + 1;
+        let pitr = Arc::new(AtomicU64::new(0));
+
+        let kv_reader = KvReader::open(Arc::clone(&path), pitr, readers);
+        let kv_writer = KvWriter::open(Arc::clone(&path), current_generation)?;
+
+        Ok(KvStore {
+            path,
+            index_map,
+            kv_reader,
+            kv_writer: Arc::new(Mutex::new(kv_writer)),
+            current_generation,
+            uncompacted: Arc::new(AtomicU64::new(uncompacted)),
+        })
+    }
+
+    fn run_compaction(&self) -> Result<()> {
+        let compaction_generation = self.current_generation + 1;
+        let mut compaction_writer = KvWriter::open(Arc::clone(&self.path), compaction_generation)?;
+
+        let index_map = self.index_map.as_ref();
+        for entry in index_map.clone().iter() {
+            let command = self.kv_reader.borrow().read_command(*entry.value())?;
+            let (offset, length) = compaction_writer.write_command(&command)?;
+            self.index_map.insert(
+                entry.key().clone(),
+                (compaction_generation, offset..(offset + length)).into(),
+            );
+        }
+
+        self.kv_reader
+            .pitr
+            .store(compaction_generation, Ordering::SeqCst);
+        self.kv_reader.close_stale_readers();
+
+        remove_stale_log_files(Arc::clone(&self.path), compaction_generation)?;
+
+        self.uncompacted.store(0, Ordering::SeqCst);
+        self.kv_writer.lock()?.refresh(compaction_generation)?;
+
+        Ok(())
     }
 }
 
 impl KvsEngine for KvStore {
     fn set(&self, key: String, value: String) -> Result<()> {
-        let mut shared_kvs = self.0.lock().unwrap();
-        let command = Command::Set {
-            key: key.clone(),
-            value: value.clone(),
-        };
-        let serialized = serde_json::to_string(&command)?;
-        persist_command_to_log(&mut shared_kvs, key, serialized)
+        let command = Command::Set { key, value };
+        let mut kv_writer = self.kv_writer.lock()?;
+        let (offset, length) = kv_writer.write_command(&command)?;
+        if let Command::Set { key, .. } = command {
+            if let Some(old_command) = self.index_map.get(&key) {
+                self.uncompacted
+                    .fetch_add(old_command.value().length, Ordering::SeqCst);
+            }
+            self.index_map.insert(
+                key,
+                (kv_writer.current_generation, offset..(offset + length)).into(),
+            );
+        }
+
+        if self.uncompacted.load(Ordering::SeqCst) > COMPACTION_THRESHOLD {
+            drop(kv_writer);
+            self.run_compaction()?;
+        }
+
+        Ok(())
     }
 
     fn get(&self, key: String) -> Result<Option<String>> {
-        let mut shared_kvs = self.0.lock().unwrap();
-        match shared_kvs.index_map.get(&key) {
+        match self.index_map.get(&key) {
             Some(log_pointer) => {
-                let log_pointer = log_pointer.clone();
-                let reader: &mut LogReader<File> = shared_kvs.log_rotator.get_log_reader();
-                reader.seek(SeekFrom::Start(log_pointer.offset))?;
-                let serialized = reader.take(log_pointer.length);
-                match serde_json::from_reader(serialized)? {
-                    Command::Set { value, .. } => Ok(Some(value)),
-                    Command::Remove { .. } => Ok(None),
+                if let Command::Set { value, .. } =
+                    self.kv_reader.read_command(*log_pointer.value())?
+                {
+                    Ok(Some(value))
+                } else {
+                    Err(KvsError::UnexpectedCommandType)
                 }
             }
             None => Ok(None),
@@ -93,88 +156,87 @@ impl KvsEngine for KvStore {
     }
 
     fn remove(&self, key: String) -> Result<()> {
-        let mut shared_kvs = self.0.lock().unwrap();
-        if shared_kvs.index_map.contains_key(&key) {
-            let command = Command::Remove { key: key.clone() };
-            let serialized = serde_json::to_string(&command)?;
-            persist_command_to_log(&mut shared_kvs, key, serialized)
-        } else {
-            Err(KvsError::KeyNotFound)
+        if !self.index_map.contains_key(&key) {
+            return Err(KvsError::KeyNotFound);
+        }
+
+        let command = Command::Remove { key };
+        let mut kv_writer = self.kv_writer.lock()?;
+        let (_offset, length) = kv_writer.write_command(&command)?;
+        if let Command::Remove { key } = command {
+            let old_command = self.index_map.remove(&key).unwrap();
+            self.uncompacted
+                .fetch_add(old_command.value().length, Ordering::SeqCst);
+            self.uncompacted.fetch_add(length, Ordering::SeqCst);
+        }
+
+        if self.uncompacted.load(Ordering::SeqCst) > COMPACTION_THRESHOLD {
+            drop(kv_writer);
+            self.run_compaction()?;
+        }
+
+        Ok(())
+    }
+}
+
+fn get_log_generations(path: &Path) -> Result<Vec<u64>> {
+    let mut result: Vec<u64> = fs::read_dir(&path)?
+        .flat_map(|res| -> Result<_> { Ok(res?.path()) })
+        .filter(|path| path.is_file() && path.extension() == Some("log".as_ref()))
+        .flat_map(|path| {
+            path.file_name()
+                .and_then(OsStr::to_str)
+                .map(|s| s.trim_end_matches(".log"))
+                .map(str::parse::<u64>)
+        })
+        .flatten()
+        .collect();
+
+    result.sort_unstable();
+    Ok(result)
+}
+
+fn load(
+    generation: u64,
+    reader: &mut BufReader<File>,
+    index_map: &SkipMap<String, LogPointer>,
+) -> Result<u64> {
+    let mut stream = Deserializer::from_reader(reader).into_iter::<Command>();
+    let mut uncompacted = 0;
+    let mut position = 0;
+    while let Some(command) = stream.next() {
+        let new_position = stream.byte_offset() as u64;
+        match command? {
+            Command::Set { key, .. } => {
+                if let Some(old_command) = index_map.get(&key) {
+                    uncompacted += old_command.value().length;
+                }
+                index_map.insert(key, (generation, position..new_position).into());
+            }
+            Command::Remove { key } => {
+                if let Some(old_command) = index_map.remove(&key) {
+                    uncompacted += old_command.value().length;
+                }
+                uncompacted += new_position - position;
+            }
+        }
+        position = new_position;
+    }
+
+    Ok(uncompacted)
+}
+
+fn remove_stale_log_files(path: Arc<PathBuf>, compaction_generation: u64) -> Result<()> {
+    let stale_generations = get_log_generations(&path)?
+        .into_iter()
+        .filter(|gen| gen < &compaction_generation);
+
+    for stale_generation in stale_generations {
+        let stale_log_path = log_path(&path, stale_generation);
+        if let Err(e) = fs::remove_file(&stale_log_path) {
+            error!("{:?} cannot be deleted: {}e", stale_log_path, e);
         }
     }
-}
-
-fn create_index_map(
-    log_reader: &mut LogReader<File>,
-) -> Result<(HashMap<String, LogPointer>, u64)> {
-    let mut result = HashMap::new();
-
-    let mut current_position = log_reader.seek(SeekFrom::Start(0))?;
-    let mut command_stream = Deserializer::from_reader(log_reader).into_iter::<Command>();
-
-    while let Some(command) = command_stream.next() {
-        let next_position = command_stream.byte_offset() as u64;
-        match command? {
-            Command::Set { key, .. } | Command::Remove { key } => {
-                result.insert(key, (current_position..next_position).into())
-            }
-        };
-        current_position = next_position;
-    }
-
-    Ok((result, current_position))
-}
-
-fn persist_command_to_log(kvs: &mut SharedKvStore, key: String, serialized: String) -> Result<()> {
-    {
-        let writer: &mut LogWriter<File> = kvs.log_rotator.get_log_writer();
-        let current_position = writer.seek(SeekFrom::End(0))?;
-        let bytes_written = writer.write(serialized.as_bytes())? as u64;
-        writer.flush()?;
-
-        kvs.index_map
-            .insert(key, (current_position, bytes_written).into());
-
-        kvs.total_bytes_written += bytes_written;
-    }
-
-    if kvs.total_bytes_written > COMPACTION_THRESHOLD {
-        trigger_compaction(kvs)?;
-    }
-
-    Ok(())
-}
-
-fn trigger_compaction(kvs: &mut SharedKvStore) -> Result<()> {
-    let mut compaction_writer = kvs.log_rotator.create_compaction_writer()?;
-    let mut writer_position = compaction_writer.current_position();
-
-    let mut new_index_map: HashMap<String, LogPointer> = HashMap::new();
-
-    let log_reader: &mut LogReader<File> = kvs.log_rotator.get_log_reader();
-    let mut reader_position = log_reader.seek(SeekFrom::Start(0))?;
-    let mut command_stream = Deserializer::from_reader(log_reader).into_iter::<Command>();
-
-    while let Some(command) = command_stream.next() {
-        let next_position = command_stream.byte_offset() as u64;
-        let command = command?;
-        match &command {
-            Command::Set { key, .. } | Command::Remove { key } => {
-                if kvs.index_map.get(key).unwrap().offset == reader_position {
-                    let serialized = serde_json::to_string(&command)?;
-                    let bytes_written = compaction_writer.write(serialized.as_bytes())? as u64;
-                    new_index_map.insert(key.clone(), (writer_position, bytes_written).into());
-                    writer_position += bytes_written;
-                }
-            }
-        };
-        reader_position = next_position;
-    }
-    compaction_writer.flush()?;
-
-    kvs.log_rotator = kvs.log_rotator.rotate()?;
-    kvs.index_map = new_index_map;
-    kvs.total_bytes_written = writer_position;
 
     Ok(())
 }

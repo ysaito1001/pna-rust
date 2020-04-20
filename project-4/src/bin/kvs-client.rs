@@ -1,9 +1,9 @@
-use kvs::{KvsClient, Result};
+use std::net::SocketAddr;
+use std::process::exit;
 
 use clap::{load_yaml, App};
 
-use std::net::SocketAddr;
-use std::process::exit;
+use kvs::{KvsClient, Result};
 
 fn run() -> Result<()> {
     let yaml = load_yaml!("cli-client.yml");

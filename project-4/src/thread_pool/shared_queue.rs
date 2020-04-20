@@ -1,10 +1,10 @@
-use super::ThreadPool;
-use crate::Result;
+use std::thread;
 
 use crossbeam::channel::{self, Receiver, Sender};
 use log::{debug, error};
 
-use std::thread;
+use super::ThreadPool;
+use crate::Result;
 
 pub struct SharedQueueThreadPool {
     tx: Sender<Box<dyn FnOnce() + Send + 'static>>,

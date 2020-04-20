@@ -1,12 +1,12 @@
-use crate::error::{KvsError, Result};
-use crate::request::Request;
-use crate::response::{GetResponse, RemoveResponse, SetResponse};
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{TcpStream, ToSocketAddrs};
 
 use serde::Deserialize;
 use serde_json::de::{Deserializer, IoRead};
 
-use std::io::{BufReader, BufWriter, Write};
-use std::net::{TcpStream, ToSocketAddrs};
+use crate::error::{KvsError, Result};
+use crate::request::Request;
+use crate::response::{GetResponse, RemoveResponse, SetResponse};
 
 pub struct KvsClient {
     reader: Deserializer<IoRead<BufReader<TcpStream>>>,

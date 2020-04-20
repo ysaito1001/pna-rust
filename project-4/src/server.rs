@@ -1,14 +1,14 @@
+use std::io::{BufReader, BufWriter, Write};
+use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+
+use log::{debug, error};
+use serde_json::Deserializer;
+
 use crate::error::Result;
 use crate::request::Request;
 use crate::response::{GetResponse, RemoveResponse, SetResponse};
 use crate::thread_pool::ThreadPool;
 use crate::KvsEngine;
-
-use log::{debug, error};
-use serde_json::Deserializer;
-
-use std::io::{BufReader, BufWriter, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
 
 pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
     engine: E,
