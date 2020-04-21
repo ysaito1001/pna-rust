@@ -110,7 +110,7 @@ impl KvStore {
         remove_stale_log_files(Arc::clone(&self.path), compaction_generation)?;
 
         self.uncompacted.store(0, Ordering::SeqCst);
-        self.kv_writer.lock()?.refresh(compaction_generation)?;
+        self.kv_writer.lock()?.refresh(compaction_generation + 1)?;
 
         Ok(())
     }
