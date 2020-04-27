@@ -27,8 +27,8 @@ impl KvReader {
         readers: BTreeMap<u64, BufReader<File>>,
     ) -> Self {
         KvReader {
-            path: path,
-            pitr: pitr,
+            path,
+            pitr,
             readers: RefCell::new(readers),
         }
     }

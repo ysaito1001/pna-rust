@@ -1,39 +1,73 @@
-use std::io::{BufReader, BufWriter, Write};
-use std::net::{TcpListener, TcpStream, ToSocketAddrs};
+use std::{
+    io::{BufReader, BufWriter, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread::{self, JoinHandle},
+};
 
 use log::{debug, error};
 use serde_json::Deserializer;
 
-use crate::error::Result;
-use crate::request::Request;
-use crate::response::{GetResponse, RemoveResponse, SetResponse};
-use crate::thread_pool::ThreadPool;
-use crate::KvsEngine;
+use crate::{
+    error::Result,
+    request::Request,
+    response::{GetResponse, RemoveResponse, SetResponse},
+    thread_pool::ThreadPool,
+    KvsEngine,
+};
 
 pub struct KvsServer<E: KvsEngine, P: ThreadPool> {
     engine: E,
-    pool: P,
+    pool: Arc<Mutex<P>>,
+    addr: SocketAddr,
+    shutdown_requested: Arc<AtomicBool>,
 }
 
 impl<E: KvsEngine, P: ThreadPool> KvsServer<E, P> {
-    pub fn new(engine: E, pool: P) -> Self {
-        KvsServer { engine, pool }
+    pub fn new(engine: E, pool: P, addr: SocketAddr) -> Self {
+        KvsServer {
+            engine,
+            pool: Arc::new(Mutex::new(pool)),
+            addr,
+            shutdown_requested: Arc::new(AtomicBool::new(false)),
+        }
     }
 
-    pub fn run<A: ToSocketAddrs>(self, addr: A) -> Result<()> {
-        let listener = TcpListener::bind(addr)?;
-        for stream in listener.incoming() {
-            let engine = self.engine.clone();
-            self.pool.spawn(move || match stream {
-                Ok(stream) => {
-                    if let Err(e) = serve(engine, stream) {
-                        error!("Error on serving client: {}", e);
-                    }
+    pub fn run(&self) -> JoinHandle<Result<()>> {
+        let addr = self.addr;
+        let pool = Arc::clone(&self.pool);
+        let engine = self.engine.clone();
+        let shutdown_requested = Arc::clone(&self.shutdown_requested);
+
+        thread::spawn(move || {
+            let listener = TcpListener::bind(&addr)?;
+            let pool = pool.lock().unwrap();
+            for stream in listener.incoming() {
+                if shutdown_requested.load(Ordering::SeqCst) {
+                    break;
                 }
-                Err(e) => error!("Connection failed: {}", e),
-            })
-        }
-        Ok(())
+
+                let engine = engine.clone();
+                pool.spawn(move || match stream {
+                    Ok(stream) => {
+                        if let Err(e) = serve(engine, stream) {
+                            error!("Error on serving client: {}", e);
+                        }
+                    }
+                    Err(e) => error!("Connection failed: {}", e),
+                })
+            }
+
+            Ok(())
+        })
+    }
+
+    pub fn initiate_shutdown(&self) {
+        self.shutdown_requested.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(&self.addr);
     }
 }
 

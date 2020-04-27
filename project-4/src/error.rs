@@ -1,6 +1,8 @@
-use std::string::FromUtf8Error;
-use std::sync::PoisonError;
-use std::{io, net};
+use std::{
+    string::FromUtf8Error,
+    sync::PoisonError,
+    {io, net},
+};
 
 use failure::Fail;
 

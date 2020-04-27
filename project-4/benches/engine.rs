@@ -13,7 +13,7 @@ pub fn set_bench(c: &mut Criterion) {
                 let temp_dir = TempDir::new().unwrap();
                 (KvStore::open(temp_dir.path()).unwrap(), temp_dir)
             },
-            |(mut kvstore, _temp_dir)| {
+            |(kvstore, _temp_dir)| {
                 for i in 1..(1 << 12) {
                     kvstore
                         .set(format!("key{}", i), "value".to_owned())
@@ -33,7 +33,7 @@ pub fn set_bench(c: &mut Criterion) {
                     temp_dir,
                 )
             },
-            |(mut kvstore, _temp_dir)| {
+            |(kvstore, _temp_dir)| {
                 for i in 1..(1 << 12) {
                     kvstore
                         .set(format!("key{}", i), "value".to_owned())
@@ -52,7 +52,7 @@ pub fn get_bench(c: &mut Criterion) {
 
     group.bench_function("kvs", |b| {
         let temp_dir = TempDir::new().unwrap();
-        let mut kvstore = KvStore::open(temp_dir.path()).unwrap();
+        let kvstore = KvStore::open(temp_dir.path()).unwrap();
         for i in 1..(1 << 12) {
             kvstore
                 .set(format!("key{}", i), "value".to_owned())
@@ -68,7 +68,7 @@ pub fn get_bench(c: &mut Criterion) {
 
     group.bench_function("sled", |b| {
         let temp_dir = TempDir::new().unwrap();
-        let mut kvstore = SledKvsEngine::new(sled::open(temp_dir.path()).unwrap());
+        let kvstore = SledKvsEngine::new(sled::open(temp_dir.path()).unwrap());
         for i in 1..(1 << 12) {
             kvstore
                 .set(format!("key{}", i), "value".to_owned())

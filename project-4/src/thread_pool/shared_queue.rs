@@ -3,35 +3,50 @@ use std::thread;
 use crossbeam::channel::{self, Receiver, Sender};
 use log::{debug, error};
 
-use super::ThreadPool;
 use crate::Result;
 
+use super::{ThreadPool, ThreadPoolMessage};
+
 pub struct SharedQueueThreadPool {
-    tx: Sender<Box<dyn FnOnce() + Send + 'static>>,
+    number_of_threads: usize,
+    tx: Sender<ThreadPoolMessage>,
 }
 
 impl ThreadPool for SharedQueueThreadPool {
     fn new(number_of_threads: usize) -> Result<Self> {
         let (tx, rx) = channel::unbounded();
         for _ in 0..number_of_threads {
-            let rx = TaskReceiver(rx.clone());
+            let rx = JobReceiver(rx.clone());
             thread::Builder::new().spawn(move || run_task(rx))?;
         }
-        Ok(SharedQueueThreadPool { tx })
+        Ok(SharedQueueThreadPool {
+            number_of_threads,
+            tx,
+        })
     }
 
     fn spawn<F>(&self, job: F)
     where
         F: FnOnce() + Send + 'static,
     {
-        self.tx.send(Box::new(job)).unwrap();
+        self.tx
+            .send(ThreadPoolMessage::RunJob(Box::new(job)))
+            .unwrap();
+    }
+}
+
+impl Drop for SharedQueueThreadPool {
+    fn drop(&mut self) {
+        for _ in 0..self.number_of_threads {
+            self.tx.send(ThreadPoolMessage::Shutdown).unwrap();
+        }
     }
 }
 
 #[derive(Clone)]
-struct TaskReceiver(Receiver<Box<dyn FnOnce() + Send + 'static>>);
+struct JobReceiver(Receiver<ThreadPoolMessage>);
 
-impl Drop for TaskReceiver {
+impl Drop for JobReceiver {
     fn drop(&mut self) {
         if thread::panicking() {
             let rx = self.clone();
@@ -42,12 +57,13 @@ impl Drop for TaskReceiver {
     }
 }
 
-fn run_task(rx: TaskReceiver) {
+fn run_task(rx: JobReceiver) {
     loop {
         match rx.0.recv() {
-            Ok(task) => {
-                task();
-            }
+            Ok(message) => match message {
+                ThreadPoolMessage::RunJob(job) => job(),
+                ThreadPoolMessage::Shutdown => break,
+            },
             Err(_) => debug!("Thread exits because the thread pool is destroyed."),
         }
     }

@@ -1,6 +1,11 @@
 use super::error::Result;
 
-pub trait ThreadPool {
+pub enum ThreadPoolMessage {
+    RunJob(Box<dyn FnOnce() + Send + 'static>),
+    Shutdown,
+}
+
+pub trait ThreadPool: Send + 'static {
     fn new(number_of_threads: usize) -> Result<Self>
     where
         Self: Sized;

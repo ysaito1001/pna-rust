@@ -72,9 +72,8 @@ fn run() -> Result<()> {
 
     with_engine!(engine, current_dir()?, |engine| {
         with_pool!(pool, num_cpus::get(), |pool| {
-            let server = KvsServer::new(engine, pool);
-            server.run(addr)?;
-            Ok(())
+            let server = KvsServer::new(engine, pool, addr);
+            server.run().join().unwrap()
         })
     })?;
 
