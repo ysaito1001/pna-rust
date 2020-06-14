@@ -1,0 +1,24 @@
+name: kvs-server
+version: "0.1.0"
+author: Yuki Saito
+args:
+  - addr:
+      long: addr
+      help: Sets the server address
+      takes_value: true
+      value_name: IP:PORT
+      default_value: 127.0.0.1:4000
+
+  - engine:
+        long: engine
+        help: Sets the storage engine
+        value_name: ENGINE-NAME
+        default_value: kvs
+        possible_values: [ kvs, sled ]
+
+  - pool:
+        long: pool
+        help: Sets the thread pool
+        value_name: THREAD-POOL-NAME
+        default_value: naive
+        possible_values: [ naive, shared_queue, rayon ]
