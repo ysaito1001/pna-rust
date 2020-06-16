@@ -1,4 +1,4 @@
-use std::{io, net, string::FromUtf8Error, sync::PoisonError};
+use std::{array, io, net, string::FromUtf8Error, sync::PoisonError};
 
 use failure::Fail;
 
@@ -27,6 +27,9 @@ pub enum KvsError {
 
     #[fail(display = "{}", _0)]
     StringError(String),
+
+    #[fail(display = "TryFromSlice error: {}", _0)]
+    TryFromSlice(array::TryFromSliceError),
 
     #[fail(display = "Unexpected command type")]
     UnexpectedCommandType,
@@ -68,6 +71,12 @@ impl From<serde_json::Error> for KvsError {
 impl From<sled::Error> for KvsError {
     fn from(err: sled::Error) -> Self {
         KvsError::Sled(err)
+    }
+}
+
+impl From<array::TryFromSliceError> for KvsError {
+    fn from(err: array::TryFromSliceError) -> Self {
+        KvsError::TryFromSlice(err)
     }
 }
 

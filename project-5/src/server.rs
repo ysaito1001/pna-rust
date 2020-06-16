@@ -11,8 +11,7 @@ use serde_json::Deserializer;
 
 use crate::{
     error::Result,
-    request::Request,
-    response::{GetResponse, RemoveResponse, SetResponse},
+    protocol::{GetResponse, RemoveResponse, Request, SetResponse},
     thread_pool::ThreadPool,
     KvsEngine,
 };

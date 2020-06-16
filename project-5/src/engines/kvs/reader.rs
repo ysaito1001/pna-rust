@@ -17,19 +17,19 @@ use crossbeam::atomic::AtomicCell;
 use super::{command::Command, constants, log_common::*, log_pointer::LogPointer};
 use crate::Result;
 
-pub struct KvReader {
+pub struct KvsReader {
     path: Arc<PathBuf>,
     pub pitr: Arc<AtomicUsize>,
     readers: AtomicCell<BTreeMap<u64, BufReader<File>>>,
 }
 
-impl KvReader {
+impl KvsReader {
     pub fn open(
         path: Arc<PathBuf>,
         pitr: Arc<AtomicUsize>,
         readers: BTreeMap<u64, BufReader<File>>,
     ) -> Self {
-        KvReader {
+        KvsReader {
             path,
             pitr,
             readers: AtomicCell::new(readers),
@@ -80,9 +80,9 @@ impl KvReader {
     }
 }
 
-impl Clone for KvReader {
+impl Clone for KvsReader {
     fn clone(&self) -> Self {
-        KvReader {
+        KvsReader {
             path: Arc::clone(&self.path),
             pitr: Arc::clone(&self.pitr),
             readers: AtomicCell::new(BTreeMap::new()),

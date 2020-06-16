@@ -11,6 +11,7 @@ edition = "2018"
 async-std = { version="1.6.0", features=["attributes", "unstable"] }
 async-trait = "0.1.35"
 bincode = "1.2.1"
+bytes = "0.5.4"
 clap = { version = "2.33.0", features = ["yaml"] }
 crossbeam = "0.7.3"
 crossbeam-skiplist = { version = "0.0.0", git = "https://github.com/crossbeam-rs/crossbeam.git", rev = "8cc906b" }

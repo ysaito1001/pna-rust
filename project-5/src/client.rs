@@ -8,8 +8,7 @@ use serde_json::de::{Deserializer, IoRead};
 
 use crate::{
     error::{KvsError, Result},
-    request::Request,
-    response::{GetResponse, RemoveResponse, SetResponse},
+    protocol::{GetResponse, RemoveResponse, Request, SetResponse},
 };
 
 pub struct KvsClient {

@@ -10,17 +10,17 @@ use super::{command::Command, constants, log_common::*};
 use crate::Result;
 
 #[derive(Debug)]
-pub struct KvWriter {
+pub struct KvsWriter {
     pub writer: BufWriter<File>,
     path: Arc<PathBuf>,
     pub current_generation: u64,
 }
 
-impl KvWriter {
+impl KvsWriter {
     pub async fn open(path: Arc<PathBuf>, generation: u64) -> Result<Self> {
         let mut file = new_log_file(&*path, generation).await?;
         file.seek(SeekFrom::Current(0)).await?;
-        Ok(KvWriter {
+        Ok(KvsWriter {
             writer: BufWriter::new(file),
             path: Arc::clone(&path),
             current_generation: generation,

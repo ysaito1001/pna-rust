@@ -20,15 +20,15 @@ use super::KvsEngine;
 use crate::{KvsError, Result};
 mod command;
 mod constants;
-mod kv_reader;
-mod kv_writer;
 mod log_common;
 mod log_pointer;
+mod reader;
+mod writer;
 use command::Command;
-use kv_reader::{deserialize_command, KvReader};
-use kv_writer::KvWriter;
 use log_common::*;
 use log_pointer::LogPointer;
+use reader::{deserialize_command, KvsReader};
+use writer::KvsWriter;
 
 /// The `KvStore` stores string key/value pairs.
 ///
@@ -59,8 +59,8 @@ use log_pointer::LogPointer;
 pub struct KvStore {
     path: Arc<PathBuf>,
     index_map: Arc<SkipMap<String, LogPointer>>,
-    kv_reader: KvReader,
-    kv_writer: Arc<Mutex<KvWriter>>,
+    kvs_reader: KvsReader,
+    kvs_writer: Arc<Mutex<KvsWriter>>,
     current_generation: u64,
     uncompacted: Arc<AtomicUsize>,
 }
@@ -87,14 +87,14 @@ impl KvStore {
         let current_generation = generations.last().unwrap_or(&0) + 1;
         let pitr = Arc::new(AtomicUsize::new(0));
 
-        let kv_reader = KvReader::open(Arc::clone(&path), pitr, readers);
-        let kv_writer = KvWriter::open(Arc::clone(&path), current_generation).await?;
+        let kvs_reader = KvsReader::open(Arc::clone(&path), pitr, readers);
+        let kvs_writer = KvsWriter::open(Arc::clone(&path), current_generation).await?;
 
         Ok(KvStore {
             path,
             index_map,
-            kv_reader,
-            kv_writer: Arc::new(Mutex::new(kv_writer)),
+            kvs_reader,
+            kvs_writer: Arc::new(Mutex::new(kvs_writer)),
             current_generation,
             uncompacted: Arc::new(AtomicUsize::new(uncompacted)),
         })
@@ -103,11 +103,15 @@ impl KvStore {
     async fn run_compaction(&self) -> Result<()> {
         let compaction_generation = self.current_generation + 1;
         let mut compaction_writer =
-            KvWriter::open(Arc::clone(&self.path), compaction_generation).await?;
+            KvsWriter::open(Arc::clone(&self.path), compaction_generation).await?;
 
         let index_map = self.index_map.as_ref();
         for entry in index_map.clone().iter() {
-            let command = self.kv_reader.borrow().read_command(*entry.value()).await?;
+            let command = self
+                .kvs_reader
+                .borrow()
+                .read_command(*entry.value())
+                .await?;
             let (offset, length) = compaction_writer.write_command(&command).await?;
             self.index_map.insert(
                 entry.key().clone(),
@@ -115,15 +119,15 @@ impl KvStore {
             );
         }
 
-        self.kv_reader
+        self.kvs_reader
             .pitr
             .store(compaction_generation as usize, Ordering::SeqCst);
-        self.kv_reader.close_stale_readers().await;
+        self.kvs_reader.close_stale_readers().await;
 
         remove_stale_log_files(Arc::clone(&self.path), compaction_generation).await?;
 
         self.uncompacted.store(0, Ordering::SeqCst);
-        self.kv_writer
+        self.kvs_writer
             .lock()
             .await
             .refresh(compaction_generation + 1)
@@ -137,8 +141,8 @@ impl KvStore {
 impl KvsEngine for KvStore {
     async fn set(&self, key: String, value: String) -> Result<()> {
         let command = Command::Set { key, value };
-        let mut kv_writer = self.kv_writer.lock().await;
-        let (offset, length) = kv_writer.write_command(&command).await?;
+        let mut writer = self.kvs_writer.lock().await;
+        let (offset, length) = writer.write_command(&command).await?;
         if let Command::Set { key, .. } = command {
             if let Some(old_command) = self.index_map.get(&key) {
                 self.uncompacted
@@ -146,12 +150,12 @@ impl KvsEngine for KvStore {
             }
             self.index_map.insert(
                 key,
-                (kv_writer.current_generation, offset..(offset + length)).into(),
+                (writer.current_generation, offset..(offset + length)).into(),
             );
         }
 
         if self.uncompacted.load(Ordering::SeqCst) > constants::COMPACTION_THRESHOLD {
-            drop(kv_writer);
+            drop(writer);
             self.run_compaction().await?;
         }
 
@@ -162,7 +166,7 @@ impl KvsEngine for KvStore {
         match self.index_map.get(&key) {
             Some(log_pointer) => {
                 if let Command::Set { value, .. } =
-                    self.kv_reader.read_command(*log_pointer.value()).await?
+                    self.kvs_reader.read_command(*log_pointer.value()).await?
                 {
                     Ok(Some(value))
                 } else {
@@ -179,8 +183,8 @@ impl KvsEngine for KvStore {
         }
 
         let command = Command::Remove { key };
-        let mut kv_writer = self.kv_writer.lock().await;
-        let (_offset, length) = kv_writer.write_command(&command).await?;
+        let mut writer = self.kvs_writer.lock().await;
+        let (_offset, length) = writer.write_command(&command).await?;
         if let Command::Remove { key } = command {
             let old_command = self.index_map.remove(&key).unwrap();
             self.uncompacted
@@ -190,7 +194,7 @@ impl KvsEngine for KvStore {
         }
 
         if self.uncompacted.load(Ordering::SeqCst) > constants::COMPACTION_THRESHOLD {
-            drop(kv_writer);
+            drop(writer);
             self.run_compaction().await?;
         }
 
