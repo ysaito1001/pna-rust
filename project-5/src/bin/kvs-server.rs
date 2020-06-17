@@ -1,20 +1,17 @@
-use std::{env::current_dir, fs, net::SocketAddr, path::PathBuf, process::exit};
+use std::{env::current_dir, path::PathBuf, process::exit};
 
-use async_std::task;
+use async_std::{fs, net::SocketAddr, task};
 use clap::{load_yaml, App};
 use log::{error, info, LevelFilter};
 use sled;
 
-use kvs::{
-    thread_pool::{NaiveThreadPool, RayonThreadPool, SharedQueueThreadPool, ThreadPool},
-    KvStore, KvsError, KvsServer, Result, SledKvsEngine,
-};
+use kvs::{KvStore, KvsError, KvsServer, Result, SledKvsEngine};
 
 macro_rules! with_engine {
     ($engine: expr, $path: expr, |$name: ident| $block: block) => {{
         match $engine {
             "kvs" => {
-                let $name = task::block_on(KvStore::open($path))?;
+                let $name = KvStore::open($path).await?;
                 let result: Result<()> = $block;
                 result
             }
@@ -28,30 +25,7 @@ macro_rules! with_engine {
     }};
 }
 
-macro_rules! with_pool {
-    ($pool: expr, $num_cpus: expr, |$name: ident| $block: block) => {{
-        match $pool {
-            "naive" => {
-                let $name = NaiveThreadPool::new($num_cpus)?;
-                let result: Result<()> = $block;
-                result
-            }
-            "shared_queue" => {
-                let $name = SharedQueueThreadPool::new($num_cpus)?;
-                let result: Result<()> = $block;
-                result
-            }
-            "rayon" => {
-                let $name = RayonThreadPool::new($num_cpus)?;
-                let result: Result<()> = $block;
-                result
-            }
-            _ => unreachable!(),
-        }
-    }};
-}
-
-fn run() -> Result<()> {
+async fn run() -> Result<()> {
     env_logger::builder().filter_level(LevelFilter::Info).init();
 
     let yaml = load_yaml!("cli-server.yml");
@@ -59,28 +33,25 @@ fn run() -> Result<()> {
 
     let addr: SocketAddr = matches.value_of("addr").unwrap().parse()?;
     let engine: &str = matches.value_of("engine").unwrap();
-    let pool: &str = matches.value_of("pool").unwrap();
 
     info!("kvs-server {}", env!("CARGO_PKG_VERSION"));
     info!("Storage engine: {}", engine);
     info!("Listening on {}", addr);
 
     let engine_file = current_dir()?.join("engine");
-    same_engine_as_last_time(&engine_file, &engine)?;
-    fs::write(engine_file, format!("{}", engine))?;
+    same_engine_as_last_time(&engine_file, &engine).await?;
+    fs::write(engine_file, format!("{}", engine)).await?;
 
     with_engine!(engine, current_dir()?, |engine| {
-        with_pool!(pool, num_cpus::get(), |pool| {
-            let server = KvsServer::new(engine, pool, addr);
-            server.run().join().unwrap()
-        })
+        let server = KvsServer::new(engine, addr);
+        server.run().await
     })?;
 
     Ok(())
 }
 
-fn same_engine_as_last_time(engine_file: &PathBuf, engine: &str) -> Result<()> {
-    match previous_engine(&engine_file)? {
+async fn same_engine_as_last_time(engine_file: &PathBuf, engine: &str) -> Result<()> {
+    match previous_engine(&engine_file).await? {
         Some(previous_engine) if previous_engine != engine => Err(KvsError::StringError(format!(
             "Attempting to use {} while the previous engine was {}",
             engine, previous_engine
@@ -89,12 +60,12 @@ fn same_engine_as_last_time(engine_file: &PathBuf, engine: &str) -> Result<()> {
     }
 }
 
-fn previous_engine(engine_file: &PathBuf) -> Result<Option<String>> {
+async fn previous_engine(engine_file: &PathBuf) -> Result<Option<String>> {
     if !engine_file.exists() {
         return Ok(None);
     }
 
-    match fs::read_to_string(engine_file) {
+    match fs::read_to_string(engine_file).await {
         Ok(engine) => Ok(Some(engine)),
         Err(e) => {
             error!("The content of engine file is invalid: {}", e);
@@ -104,7 +75,7 @@ fn previous_engine(engine_file: &PathBuf) -> Result<Option<String>> {
 }
 
 fn main() {
-    if let Err(e) = run() {
+    if let Err(e) = task::block_on(run()) {
         error!("{}", e);
         exit(1);
     }

@@ -19,7 +19,7 @@ impl KvsDecoder {
         }
     }
 
-    pub fn decode<T: for<'a> Deserialize<'a>>(&mut self) -> Option<Result<T>> {
+    pub fn decode<D: for<'a> Deserialize<'a>>(&mut self) -> Option<Result<D>> {
         if self.start_code_bytes_read == 0 && self.buffer.len() > 2 * constants::USIZE_BYTES {
             if let Err(e) = self.trim_start_code() {
                 return Some(Err(e));

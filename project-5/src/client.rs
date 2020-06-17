@@ -1,56 +1,52 @@
-use std::{
-    io::{BufReader, BufWriter, Write},
+use async_std::{
     net::{TcpStream, ToSocketAddrs},
+    prelude::*,
 };
-
-use serde::Deserialize;
-use serde_json::de::{Deserializer, IoRead};
 
 use crate::{
     error::{KvsError, Result},
-    protocol::{GetResponse, RemoveResponse, Request, SetResponse},
+    protocol::{KvsStream, Request, Response},
 };
 
 pub struct KvsClient {
-    reader: Deserializer<IoRead<BufReader<TcpStream>>>,
-    writer: BufWriter<TcpStream>,
+    kvs_stream: KvsStream<Response>,
 }
 
 impl KvsClient {
-    pub fn connect<A: ToSocketAddrs>(addr: A) -> Result<Self> {
-        let stream = TcpStream::connect(addr)?;
-        let reader = Deserializer::from_reader(BufReader::new(stream.try_clone()?));
-        let writer = BufWriter::new(stream);
-        Ok(KvsClient { reader, writer })
+    pub async fn connect<A: ToSocketAddrs>(addr: A) -> Result<Self> {
+        let stream = TcpStream::connect(addr).await?;
+        Ok(KvsClient {
+            kvs_stream: KvsStream::new(stream),
+        })
     }
 
-    pub fn get(&mut self, key: String) -> Result<Option<String>> {
-        serde_json::to_writer(&mut self.writer, &Request::Get { key })?;
-        self.writer.flush()?;
-        let response = GetResponse::deserialize(&mut self.reader)?;
-        match response {
-            GetResponse::Ok(value) => Ok(value),
-            GetResponse::Err(e) => Err(KvsError::StringError(e)),
+    pub async fn get(&mut self, key: String) -> Result<Option<String>> {
+        let request = Request::Get { key };
+        self.kvs_stream.send(&request).await?;
+        let response = self.kvs_stream.next().await.unwrap();
+        match response? {
+            Response::Ok(value) => Ok(value),
+            Response::Err(e) => Err(KvsError::StringError(e)),
         }
     }
 
-    pub fn set(&mut self, key: String, value: String) -> Result<()> {
-        serde_json::to_writer(&mut self.writer, &Request::Set { key, value })?;
-        self.writer.flush()?;
-        let response = SetResponse::deserialize(&mut self.reader)?;
-        match response {
-            SetResponse::Ok(_) => Ok(()),
-            SetResponse::Err(e) => Err(KvsError::StringError(e)),
+    pub async fn set(&mut self, key: String, value: String) -> Result<()> {
+        let request = Request::Set { key, value };
+        self.kvs_stream.send(&request).await?;
+        let response = self.kvs_stream.next().await.unwrap();
+        match response? {
+            Response::Ok(_) => Ok(()),
+            Response::Err(e) => Err(KvsError::StringError(e)),
         }
     }
 
-    pub fn remove(&mut self, key: String) -> Result<()> {
-        serde_json::to_writer(&mut self.writer, &Request::Remove { key })?;
-        self.writer.flush()?;
-        let response = RemoveResponse::deserialize(&mut self.reader)?;
-        match response {
-            RemoveResponse::Ok(_) => Ok(()),
-            RemoveResponse::Err(e) => Err(KvsError::StringError(e)),
+    pub async fn remove(&mut self, key: String) -> Result<()> {
+        let request = Request::Remove { key };
+        self.kvs_stream.send(&request).await?;
+        let response = self.kvs_stream.next().await.unwrap();
+        match response? {
+            Response::Ok(_) => Ok(()),
+            Response::Err(e) => Err(KvsError::StringError(e)),
         }
     }
 }

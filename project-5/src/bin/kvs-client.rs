@@ -1,10 +1,11 @@
 use std::{net::SocketAddr, process::exit};
 
+use async_std::task;
 use clap::{load_yaml, App};
 
 use kvs::{KvsClient, Result};
 
-fn run() -> Result<()> {
+async fn run() -> Result<()> {
     let yaml = load_yaml!("cli-client.yml");
     let matches = App::from_yaml(yaml).get_matches();
 
@@ -20,8 +21,8 @@ fn run() -> Result<()> {
                 .to_string();
             let addr: SocketAddr = matches.value_of("addr").unwrap().parse()?;
 
-            let mut client = KvsClient::connect(addr)?;
-            client.set(key, value)?;
+            let mut client = KvsClient::connect(addr).await?;
+            client.set(key, value).await?;
         }
         ("get", Some(matches)) => {
             let key = matches
@@ -30,8 +31,8 @@ fn run() -> Result<()> {
                 .to_string();
             let addr: SocketAddr = matches.value_of("addr").unwrap().parse()?;
 
-            let mut client = KvsClient::connect(addr)?;
-            if let Some(value) = client.get(key)? {
+            let mut client = KvsClient::connect(addr).await?;
+            if let Some(value) = client.get(key).await? {
                 println!("{}", value);
             } else {
                 println!("Key not found");
@@ -44,8 +45,8 @@ fn run() -> Result<()> {
                 .to_string();
             let addr: SocketAddr = matches.value_of("addr").unwrap().parse()?;
 
-            let mut client = KvsClient::connect(addr)?;
-            client.remove(key)?;
+            let mut client = KvsClient::connect(addr).await?;
+            client.remove(key).await?;
         }
         _ => unreachable!(),
     }
@@ -54,7 +55,7 @@ fn run() -> Result<()> {
 }
 
 fn main() {
-    if let Err(e) = run() {
+    if let Err(e) = task::block_on(run()) {
         eprintln!("{}", e);
         exit(1);
     }

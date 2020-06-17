@@ -1,7 +1,7 @@
 pub use client::KvsClient;
 pub use engines::{KvStore, KvsEngine, SledKvsEngine};
 pub use error::{KvsError, Result};
-pub use protocol::{GetResponse, RemoveResponse, Request, SetResponse};
+pub use protocol::{Request, Response};
 pub use server::KvsServer;
 
 mod client;

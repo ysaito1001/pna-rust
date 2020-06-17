@@ -8,5 +8,5 @@ mod stream;
 pub use decoder::KvsDecoder;
 pub use encoder::KvsEncoder;
 pub use request::Request;
-pub use response::{GetResponse, RemoveResponse, SetResponse};
+pub use response::Response;
 pub use stream::KvsStream;

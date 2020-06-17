@@ -1,3 +1,5 @@
+use std::marker::PhantomData;
+
 use async_std::{
     io::Read,
     net::TcpStream,
@@ -5,30 +7,32 @@ use async_std::{
     prelude::*,
     task::{Context, Poll},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
-use super::{decoder::KvsDecoder, encoder::KvsEncoder, request::Request};
+use super::{decoder::KvsDecoder, encoder::KvsEncoder};
 use crate::{KvsError, Result};
 
 const BUFFER_CAPACITY: usize = 2 * 1024;
 const MAX_MESSAGE_SIZE: usize = 4 * 1024;
 
-pub struct KvsStream {
+pub struct KvsStream<D: for<'a> Deserialize<'a>> {
     encoder: KvsEncoder,
     decoder: KvsDecoder,
     tcp_stream: TcpStream,
+    phantom: PhantomData<D>,
 }
 
-impl KvsStream {
+impl<D: for<'a> Deserialize<'a>> KvsStream<D> {
     pub fn new(tcp_stream: TcpStream) -> Self {
         KvsStream {
             encoder: KvsEncoder::new(BUFFER_CAPACITY),
             decoder: KvsDecoder::new(BUFFER_CAPACITY),
             tcp_stream,
+            phantom: PhantomData,
         }
     }
 
-    pub async fn send<T: Serialize>(&mut self, response: T) -> Result<()> {
+    pub async fn send<S: Serialize>(&mut self, response: S) -> Result<()> {
         let encoded = self.encoder.encode(response)?;
         Ok(self.tcp_stream.write_all(&encoded).await?)
     }
@@ -49,12 +53,17 @@ impl KvsStream {
     }
 }
 
-impl Stream for KvsStream {
-    type Item = Result<Request>;
+impl<D: for<'a> Deserialize<'a>> Unpin for KvsStream<D> {}
 
-    fn poll_next(mut self: Pin<&mut KvsStream>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+impl<D: for<'a> Deserialize<'a>> Stream for KvsStream<D> {
+    type Item = Result<D>;
+
+    fn poll_next(
+        mut self: Pin<&mut KvsStream<D>>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Self::Item>> {
         loop {
-            match self.decoder.decode() {
+            match self.decoder.decode::<D>() {
                 Some(a) => return Poll::Ready(Some(a)),
                 None => (),
             }
